@@ -22,6 +22,7 @@ import akka.stream.scaladsl.Sink
 import akka.actor.typed.ActorSystem
 import akka.http.scaladsl.server.StandardRoute
 import akka.http.scaladsl.server.RouteResult
+import akka.http.scaladsl.server.RequestContext
 
 object ProductRoute extends ProductSerializerJSON {
 
@@ -111,12 +112,7 @@ object ProductRoute extends ProductSerializerJSON {
             val response: Future[ProductService.ProductResponse] =
                 productService.ask(ref => ProductService.FindProduct(id.toLong, ref))
             
-            onComplete(response) {
-                case Success(value) => 
-                    ff(value)
-                case Failure(ex) =>
-                    failWith(ex)
-            }
+            completeResponse(response)
         }
     }
 
@@ -126,30 +122,30 @@ object ProductRoute extends ProductSerializerJSON {
             val scheduler = system.scheduler
             val response: Future[ProductService.ProductResponse] =
                 productService.ask(ref => ProductService.SearchProduct(desc, ref))
-            
-            onComplete(response) {
-                case Success(value) => 
-                    ff(value)
-                case Failure(ex) =>
-                    failWith(ex)
-            }
+
+            completeResponse(response)
         }
     }
 
-    private def ff(res : ProductService.ProductResponse)
-        (implicit system: ActorSystem[_]) : StandardRoute = {
-        res match {
-            case ProductFound(publisher) => 
-                implicit val ec = system.executionContext
-                val data = Source.fromPublisher(publisher)
-                    .runWith(Sink.collection[Product, List[Product]])
-                    .map {
-                        productList =>
-                            Response.ResponseProduct(productList)
-                    }
-                complete(data)
-            case _ =>
-                complete(StatusCodes.BadRequest)
-        }
+    private def completeResponse(response : Future[ProductService.ProductResponse])
+        (implicit system: ActorSystem[_]):(RequestContext => Future[RouteResult]) = {
+        onComplete(response) {
+                case Success(value) => 
+                    value match {
+                        case ProductFound(publisher) => 
+                            implicit val ec = system.executionContext
+                            val data = Source.fromPublisher(publisher)
+                                .runWith(Sink.collection[Product, List[Product]])
+                                .map {
+                                    productList =>
+                                        Response.ResponseProduct(productList)
+                                }
+                            complete(data)
+                        case _ =>
+                            complete(StatusCodes.BadRequest)
+                        }
+                case Failure(ex) =>
+                    failWith(ex)
+            }
     }
 }
